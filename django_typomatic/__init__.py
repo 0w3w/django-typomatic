@@ -1,3 +1,4 @@
+import re
 import logging
 from rest_framework import serializers
 from .mappings import mappings
@@ -10,8 +11,10 @@ __serializers = dict()
 __field_mappings = dict()
 # Custom field_name to TS Type overrides
 __mapping_overrides = dict()
+# Default/Shared context
+__default_context = 'default'
 
-def ts_field(ts_type: str, context='default'):
+def ts_field(ts_type: str, context=__default_context):
     '''
     Any valid Django Rest Framework Serializer Field with this class decorator will
     be added to a list in a __field_mappings dictionary.
@@ -61,25 +64,34 @@ def ts_interface(context='default', mapping_overrides=None):
         return cls
     return decorator
 
-def __process_field(field_name, field, context, serializer):
+def __get_interface_name(name, prefix, suffix):
+    name = re.sub('Serializer$', '', name)
+    return f"{prefix}{name}{suffix}"
+
+def __process_field(field_name, field, context, serializer, prefix, suffix):
     '''
     Generates and returns a tuple representing the Typescript field name and Type.
     '''
     is_many = hasattr(field, 'child')
     field_type = is_many and type(field.child) or type(field)
     if field_type in __serializers[context]:
-        ts_type = field_type.__name__
-    elif field_type in __field_mappings[context]:
+        ts_type = __get_interface_name(field_type.__name__, prefix, suffix)
+    elif (__default_context in __serializers) and field_type in __serializers[__default_context]:
+        ts_type = __get_interface_name(field_type.__name__, prefix, suffix)
+    elif (context in __field_mappings) and field_type in __field_mappings[context]:
         ts_type = __field_mappings[context].get(field_type, 'any')
+    elif (__default_context in __field_mappings) and field_type in __field_mappings[__default_context]:
+        ts_type = __field_mappings[__default_context].get(field_type, 'any')
     elif (context in __mapping_overrides) and (serializer in __mapping_overrides[context]) and field_name in __mapping_overrides[context][serializer]:
         ts_type = __mapping_overrides[context][serializer].get(field_name, 'any')
     else:
         ts_type = mappings.get(field_type, 'any')
+
     if is_many:
         ts_type += '[]'
     return (field_name, ts_type)
 
-def __get_ts_interface(serializer, context):
+def __get_ts_interface(serializer, context, ts_interface_prefix, ts_interface_suffix):
     '''
     Generates and returns a Typescript Interface by iterating
     through the serializer fields of the DRF Serializer class
@@ -95,14 +107,20 @@ def __get_ts_interface(serializer, context):
     else:
         fields = serializer._declared_fields.items()
     ts_fields = []
+    ts_indexable_types = []
     for key, value in fields:
-        ts_field = __process_field(key, value, context, serializer)
+        ts_field = __process_field(key, value, context, serializer, ts_interface_prefix, ts_interface_suffix)
         ts_fields.append(f"    {ts_field[0]}: {ts_field[1]};")
+        if ts_field[1] not in ts_indexable_types:
+            ts_indexable_types.append(ts_field[1])
     collapsed_fields = '\n'.join(ts_fields)
-    return f'export interface {name} {{\n{collapsed_fields}\n}}\n\n'
+    ts_indexable_type = ' | '.join(ts_indexable_types)
+    name = __get_interface_name(name, ts_interface_prefix, ts_interface_suffix)
+    indexable_type_str = f'    [x: string]: {ts_indexable_type};'
+    return f'export interface {name} {{\n{indexable_type_str}\n{collapsed_fields}\n}}\n\n'
 
 
-def generate_ts(output_path, context='default'):
+def generate_ts(output_path, context='default', ts_interface_prefix='', ts_interface_suffix=''):
     '''
     When this function is called, a Typescript interface will be generated
     for each DRF Serializer in the serializers dictionary, depending on the
@@ -113,6 +131,6 @@ def generate_ts(output_path, context='default'):
     The Typescript interfaces will then be outputted to the file provided.
     '''
     with open(output_path, 'w') as output_file:
-        interfaces = [__get_ts_interface(serializer, context)
+        interfaces = [__get_ts_interface(serializer, context, ts_interface_prefix, ts_interface_suffix)
                       for serializer in __serializers[context]]
         output_file.write(''.join(interfaces))
