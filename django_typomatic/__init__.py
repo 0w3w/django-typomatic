@@ -117,10 +117,9 @@ def __get_ts_interface(serializer, context, ts_interface_prefix, ts_interface_su
     ts_indexable_type = ' | '.join(ts_indexable_types)
     name = __get_interface_name(name, ts_interface_prefix, ts_interface_suffix)
     indexable_type_str = f'    [x: string]: {ts_indexable_type};'
-    return f'export interface {name} {{\n{indexable_type_str}\n{collapsed_fields}\n}}\n\n'
+    return f'  export interface {name} {{\n{indexable_type_str}\n{collapsed_fields}\n  }}\n\n'
 
-
-def generate_ts(output_path, context='default', ts_interface_prefix='', ts_interface_suffix=''):
+def generate_ts(output_path, context='default', ts_interface_prefix='', ts_interface_suffix='', all_contexts=False):
     '''
     When this function is called, a Typescript interface will be generated
     for each DRF Serializer in the serializers dictionary, depending on the
@@ -131,6 +130,9 @@ def generate_ts(output_path, context='default', ts_interface_prefix='', ts_inter
     The Typescript interfaces will then be outputted to the file provided.
     '''
     with open(output_path, 'w') as output_file:
-        interfaces = [__get_ts_interface(serializer, context, ts_interface_prefix, ts_interface_suffix)
-                      for serializer in __serializers[context]]
-        output_file.write(''.join(interfaces))
+        for declared_context in __serializers:
+            if all_contexts or context == declared_context:
+                interfaces = [__get_ts_interface(serializer, declared_context, ts_interface_prefix, ts_interface_suffix) for serializer in __serializers[declared_context]]
+                output_file.write(f'\ndeclare namespace {declared_context} {{\n\n')
+                output_file.write(''.join(interfaces))
+                output_file.write('}')
